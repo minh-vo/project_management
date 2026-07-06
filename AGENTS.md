@@ -51,3 +51,5 @@ A working MVP of the frontend has been built and is already in frontend. This is
 
 All documents for planning and executing this project will be in the docs/ directory.
 Please review the docs/PLAN.md document before proceeding.
+
+Implementation decisions made during the build are recorded in docs/PLAN.md ("Implementation decisions"), with area-specific detail in backend/AGENTS.md, frontend/AGENTS.md, and scripts/AGENTS.md. The database design is in docs/DATABASE.md.

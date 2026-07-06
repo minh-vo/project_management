@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project Management MVP</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        display: flex;
+        min-height: 100vh;
+        margin: 0;
+        align-items: center;
+        justify-content: center;
+        background: #f6f8fb;
+      }
+      main {
+        text-align: center;
+        padding: 3rem;
+        background: white;
+        border-radius: 16px;
+        border-top: 4px solid #ecad0a;
+        box-shadow: 0 12px 24px rgba(3, 33, 71, 0.08);
+      }
+      h1 { color: #032147; }
+      p { color: #888888; }
+      #api-status { color: #209dd7; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Hello World</h1>
+      <p>Scaffolding placeholder. The Kanban app will be served here.</p>
+      <p>API health: <span id="api-status">checking...</span></p>
+    </main>
+    <script>
+      fetch("/api/health")
+        .then((res) => res.json())
+        .then((data) => {
+          document.getElementById("api-status").textContent = data.status;
+        })
+        .catch(() => {
+          document.getElementById("api-status").textContent = "unreachable";
+        });
+    </script>
+  </body>
+</html>
