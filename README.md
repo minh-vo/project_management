@@ -11,11 +11,13 @@ A local Kanban board app with sign-in, persistent storage, and an AI assistant t
 
 ## Quick start
 
-1. Create a `.env` file in the project root:
+1. Copy `.env.example` to `.env` and fill in your OpenRouter key:
 
    ```
    OPENROUTER_API_KEY=your_key_here
    ```
+
+   `SESSION_SECRET` in that file is optional for local use (see the comment there).
 
 2. Start the app (Docker required):
 

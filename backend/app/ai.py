@@ -89,26 +89,38 @@ def finalize_reply(
 
 async def complete(messages: list[dict[str, str]]) -> tuple[str, str | None]:
     """Send a structured chat completion request and return raw JSON plus finish_reason."""
-    async with httpx.AsyncClient(timeout=120) as client:
-        response = await client.post(
-            OPENROUTER_URL,
-            headers={"Authorization": f"Bearer {os.environ['OPENROUTER_API_KEY']}"},
-            json={
-                "model": MODEL,
-                "messages": messages,
-                "max_tokens": COMPLETION_MAX_TOKENS,
-                "reasoning": {"effort": "low"},
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "chat_response",
-                        "strict": True,
-                        "schema": CHAT_RESPONSE_SCHEMA,
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=502, detail="AI service is not configured (missing OPENROUTER_API_KEY)."
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.post(
+                OPENROUTER_URL,
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": MODEL,
+                    "messages": messages,
+                    "max_tokens": COMPLETION_MAX_TOKENS,
+                    "reasoning": {"effort": "low"},
+                    "response_format": {
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "chat_response",
+                            "strict": True,
+                            "schema": CHAT_RESPONSE_SCHEMA,
+                        },
                     },
                 },
-            },
-        )
-    response.raise_for_status()
+            )
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502, detail="AI service is unavailable. Please try again."
+        ) from exc
+
     choice = response.json()["choices"][0]
     return choice["message"]["content"], choice.get("finish_reason")
 

@@ -1,6 +1,7 @@
 import copy
 import json
 
+import httpx
 import pytest
 import respx
 from fastapi.testclient import TestClient
@@ -118,6 +119,43 @@ def test_chat_history_persisted_and_returned_in_order(monkeypatch):
         "Second reply",
     ]
     assert all(m["created_at"] for m in history)
+
+
+def test_chat_missing_api_key_returns_502(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    client = make_client()
+
+    response = client.post("/api/chat", json={"message": "hi"})
+
+    assert response.status_code == 502
+    assert "not configured" in response.json()["detail"]
+
+
+@respx.mock
+def test_chat_openrouter_error_status_returns_502(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    respx.post(OPENROUTER_URL).mock(return_value=Response(500, json={"error": "boom"}))
+    client = make_client()
+
+    response = client.post("/api/chat", json={"message": "hi"})
+
+    assert response.status_code == 502
+    assert "unavailable" in response.json()["detail"]
+    # A failed AI call should not corrupt the board or history.
+    assert client.get("/api/board").json() == SEED_BOARD
+    assert client.get("/api/chat").json()["messages"] == []
+
+
+@respx.mock
+def test_chat_network_error_returns_502(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    respx.post(OPENROUTER_URL).mock(side_effect=httpx.ConnectError("connection refused"))
+    client = make_client()
+
+    response = client.post("/api/chat", json={"message": "hi"})
+
+    assert response.status_code == 502
+    assert "unavailable" in response.json()["detail"]
 
 
 def test_finalize_reply_replaces_ellipsis_placeholder():
