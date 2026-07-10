@@ -142,3 +142,69 @@ Success criteria: via curl/tests, a chat message like "add a card called X to Ba
 
 Tests: Vitest component tests with mocked API (render history, send message, board refresh trigger); Playwright e2e with the real backend: log in, ask the AI to create a card, see the card appear on the board without a manual reload.
 Success criteria: full flow works in the container — sign in, chat with AI, AI moves/creates/edits cards, board updates live; all unit, backend, and e2e tests pass.
+
+## Decisions locked in for Parts 11-15 (agreed with user before implementation)
+
+- Feature scope: real multi-user accounts, multiple boards per user, and card metadata (due date, labels, priority, assignee). Explicitly out of scope: board sharing/collaboration, comments/activity log, per-board custom columns (columns stay fixed and global).
+- Delivery is phased — each part independently shippable and fully tested before the next starts, rather than one large connected change.
+- Auth stays a "simple shared-secret" model: a small, operator-configured `SEED_USERS` list (env var), no self-serve registration, no password-hashing dependency — closest to the original MVP's spirit while enabling multiple real accounts.
+- CI is added (GitHub Actions) so "strong test coverage" is enforced going forward, not just aspirational.
+
+## Part 11: CI pipeline
+
+- [x] `.github/workflows/ci.yml`: backend pytest job, frontend lint/typecheck/unit job, Playwright e2e job (all AI calls mocked, so no `OPENROUTER_API_KEY` secret needed)
+
+Tests: this part *is* the test infrastructure; validated by running the same commands locally before committing the workflow.
+Success criteria: all three CI jobs pass on a clean checkout.
+
+## Part 12: Multi-user auth foundation
+
+- [x] `app/db.py`: `seed_users()` parses `SEED_USERS` env (`user:pass,user2:pass2`, default `user:password`); passwords live only in this env-derived dict, never in the database
+- [x] `init_db()` seeds every configured user (previously just `"user"`)
+- [x] `app/auth.py`: `login()` checks credentials against `seed_users()`; session cookie signs the user's **id** instead of username; `CurrentUserId` dependency (renamed from `CurrentUser`); `/api/me` does one extra lookup to return `{username}`
+- [x] `app/board.py` / `app/ai.py`: routes take `user_id` directly, dropping the now-unnecessary username-to-id resolution
+- [x] `tests/conftest.py` introduced (shared `temp_db` fixture and `make_client`, previously duplicated); `test_auth.py` gains DB isolation and multi-user coverage
+- [x] Frontend: "Signed in as {username}" next to the Log out button
+
+Tests: backend — second seeded user can log in with isolated `/api/me`, session cookie payload is an int; frontend — unit test for the "Signed in as" text, extended `page.test.tsx`. Full existing suite (backend + frontend unit + e2e) re-verified with zero regressions.
+Success criteria: multiple operator-configured accounts can log in independently; old single-user flows are unaffected.
+
+## Part 13: Multi-board backend
+
+- [x] `app/db.py`: `migrate()` upgrades a pre-multi-board database in place (structural check via `PRAGMA table_info`, not a version counter) — rebuilds `boards` to drop the `UNIQUE` constraint and add `name`, adds and backfills `chat_messages.board_id`; `EMPTY_BOARD` for boards created via the UI; `ensure_user_board` no longer relies on `INSERT OR IGNORE` (no longer unique) — guarded by `WHERE NOT EXISTS`
+- [x] `app/board.py`: `list_boards` / `create_board` / `rename_board` / `delete_board` / `load_board` / `save_board`, all ownership-scoped (`user_id` + `board_id`); routes under `/api/boards`; deleting a user's last board is rejected (409, checked *after* ownership so a 404 on someone else's board still wins)
+- [x] `app/ai.py`: chat routes become board-scoped (`/api/boards/{id}/chat`); `chat_messages` queries filter by `board_id`
+- [x] Temporary compat aliases (`/api/board`, `/api/chat` singular) kept during this part so the not-yet-updated frontend and its e2e suite stay green; removed in Part 14
+- [x] `tests/test_boards.py`: CRUD, cross-user ownership isolation, chat-history-per-board isolation, and a migration regression test that hand-builds an old-schema database and asserts data survives with `init_db()` idempotent on a second run
+
+Tests: full backend suite (43 tests) and full e2e suite (via the compat aliases, unchanged) both green.
+Success criteria: a user can have multiple boards at the data/API layer with zero visible frontend change yet.
+
+## Part 14: Multi-board frontend
+
+- [x] `src/lib/api.ts`: `Board` type, `listBoards`/`createBoard`/`renameBoard`/`deleteBoard`; `getBoard`/`putBoard`/`getChat`/`postChat` become board-id-scoped; `request()` treats `204 No Content` as valid
+- [x] `src/app/page.tsx`: owns the board list and active `boardId` (remembered per-browser in `localStorage`, falling back to most-recently-updated)
+- [x] `src/components/BoardSwitcher.tsx` (new): tabs + new/rename/delete, delete hidden when it's the only board
+- [x] `src/components/KanbanBoard.tsx`: takes `boardId`; parent remounts it via `key={boardId}` on switch rather than hand-resetting the debounce/`isDirty` refs — sidesteps a stale-closure `PUT` firing against the previous board
+- [x] Backend compat aliases removed; `test_board.py`/`test_ai.py` ported to the board-scoped routes
+- [x] e2e reset pattern overhauled: each spec creates its own uniquely-named, demo-seeded throwaway board (`tests/helpers.ts`) instead of resetting one shared board — necessary since boards are no longer singular, and avoids cross-test interference under parallel workers
+- [x] `tests/boards.spec.ts` (new): create/switch/rename/delete via the UI, no card leakage between boards
+
+Tests: two real bugs found and fixed via this verification, not by inspection — see below. Full backend (43) + frontend unit (26) + e2e (19) suites green across 3 consecutive full e2e runs.
+Success criteria: a user can create, switch between, rename, and delete boards in the UI; switching boards never leaks state between them.
+
+Bugs found during Part 14 verification (all fixed, not just noted):
+- `delete_board_route`'s "last board" guard checked the requester's *own* board count before checking whether the target board belonged to them at all, so deleting a nonexistent or someone else's board ID returned 409 instead of 404 whenever the requester happened to have only one board. Fixed by checking ownership first.
+- `BoardSwitcher`'s tab list used `flex-wrap`, so once enough boards existed the header grew tall enough to push the columns out of the viewport, breaking coordinate-based Playwright drag simulations in unrelated specs. Fixed with a horizontally-scrolling, non-wrapping tab row (also just a better UI for many boards).
+- The switcher's `aria-pressed` flips synchronously on click, before the newly-selected board's own data fetch resolves — a test that clicked a tab and immediately interacted with the board could land on the *previous* board's about-to-unmount DOM (same test ids reused across boards). `tests/helpers.ts`'s `pickBoard` now waits for that specific board's `GET` response before returning.
+
+## Part 15: Card metadata
+
+- [x] `app/board.py`: `Card` gains optional `dueDate`, `labels`, `priority` (`low`/`medium`/`high`), `assigneeId` — all default to empty/null so existing board blobs deserialize unchanged, no migration needed
+- [x] `app/users.py` (new): `GET /api/users` returns `[{id, username}]` for the assignee picker
+- [x] Frontend: `CardMetadata` type groups the four fields; `NewCardForm`/`KanbanCard` gain due-date/priority/labels/assignee inputs and display badges
+- [x] `tests/test_board.py`: metadata round-trip, defaults-without-metadata, and a backward-compat test that writes a legacy (no-metadata-keys) card JSON directly into a board row and confirms `GET` fills defaults; `tests/test_users.py` (new)
+- [x] `tests/card-metadata.spec.ts` (new): due date/priority/labels/assignee survive a reload
+
+Tests: full backend (49) + frontend unit (28) + e2e (20) suites green across 2 consecutive full e2e runs.
+Success criteria: cards can carry and display due date, priority, labels, and an assignee; old boards without these fields still load correctly.

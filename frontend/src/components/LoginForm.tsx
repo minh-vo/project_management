@@ -1,10 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { login } from "@/lib/api";
+import { login, type User } from "@/lib/api";
 
 type LoginFormProps = {
-  onSuccess: () => void;
+  onSuccess: (user: User) => void;
 };
 
 export const LoginForm = ({ onSuccess }: LoginFormProps) => {
@@ -18,8 +18,8 @@ export const LoginForm = ({ onSuccess }: LoginFormProps) => {
     setError(null);
     setIsSubmitting(true);
     try {
-      await login(username, password);
-      onSuccess();
+      const user = await login(username, password);
+      onSuccess(user);
     } catch {
       setError("Invalid username or password.");
       setIsSubmitting(false);

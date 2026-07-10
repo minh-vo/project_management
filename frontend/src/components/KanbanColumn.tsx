@@ -1,22 +1,35 @@
 import clsx from "clsx";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import type { Card, Column } from "@/lib/kanban";
+import type { AppUser } from "@/lib/api";
+import type { Card, CardMetadata, Column } from "@/lib/kanban";
 import { KanbanCard } from "@/components/KanbanCard";
 import { NewCardForm } from "@/components/NewCardForm";
 
 type KanbanColumnProps = {
   column: Column;
   cards: Card[];
+  users: AppUser[];
   onRename: (columnId: string, title: string) => void;
-  onAddCard: (columnId: string, title: string, details: string) => void;
-  onEditCard: (cardId: string, title: string, details: string) => void;
+  onAddCard: (
+    columnId: string,
+    title: string,
+    details: string,
+    metadata: CardMetadata
+  ) => void;
+  onEditCard: (
+    cardId: string,
+    title: string,
+    details: string,
+    metadata: CardMetadata
+  ) => void;
   onDeleteCard: (columnId: string, cardId: string) => void;
 };
 
 export const KanbanColumn = ({
   column,
   cards,
+  users,
   onRename,
   onAddCard,
   onEditCard,
@@ -55,6 +68,7 @@ export const KanbanColumn = ({
             <KanbanCard
               key={card.id}
               card={card}
+              users={users}
               onEdit={onEditCard}
               onDelete={(cardId) => onDeleteCard(column.id, cardId)}
             />
@@ -67,7 +81,8 @@ export const KanbanColumn = ({
         )}
       </div>
       <NewCardForm
-        onAdd={(title, details) => onAddCard(column.id, title, details)}
+        users={users}
+        onAdd={(title, details, metadata) => onAddCard(column.id, title, details, metadata)}
       />
     </section>
   );

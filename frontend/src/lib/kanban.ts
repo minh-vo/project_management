@@ -1,7 +1,27 @@
+export type Priority = "low" | "medium" | "high";
+
 export type Card = {
   id: string;
   title: string;
   details: string;
+  dueDate?: string | null;
+  labels?: string[];
+  priority?: Priority | null;
+  assigneeId?: number | null;
+};
+
+export type CardMetadata = {
+  dueDate: string | null;
+  labels: string[];
+  priority: Priority | null;
+  assigneeId: number | null;
+};
+
+export const emptyCardMetadata: CardMetadata = {
+  dueDate: null,
+  labels: [],
+  priority: null,
+  assigneeId: null,
 };
 
 export type Column = {

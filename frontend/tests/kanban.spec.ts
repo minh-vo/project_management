@@ -1,22 +1,21 @@
 import { expect, test } from "@playwright/test";
+import { loginAndCreateBoard, openBoard, type SeededBoard } from "./helpers";
 
-test.beforeEach(async ({ page }) => {
-  const response = await page.request.post("/api/login", {
-    data: { username: "user", password: "password" },
-  });
-  if (!response.ok()) {
-    throw new Error(`Login failed: ${response.status()}`);
-  }
+let board: SeededBoard;
+
+test.beforeEach(async ({ page }, testInfo) => {
+  const name = `Kanban ${testInfo.testId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  board = await loginAndCreateBoard(page, name);
 });
 
 test("loads the kanban board", async ({ page }) => {
-  await page.goto("/");
+  await openBoard(page, board);
   await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
   await expect(page.locator('[data-testid^="column-"]')).toHaveCount(5);
 });
 
 test("adds a card to a column", async ({ page }) => {
-  await page.goto("/");
+  await openBoard(page, board);
   const firstColumn = page.locator('[data-testid^="column-"]').first();
   await firstColumn.getByRole("button", { name: /add a card/i }).click();
   await firstColumn.getByPlaceholder("Card title").fill("Playwright card");
@@ -30,7 +29,7 @@ test("drops a card into the empty lower area of a short column", async ({
 }) => {
   // Regression: closestCorners used to resolve this drop to a card in a
   // neighboring taller column, bouncing the card back to its origin.
-  await page.goto("/");
+  await openBoard(page, board);
   const card = page.getByTestId("card-card-1");
   const targetColumn = page.getByTestId("column-col-discovery");
   const cardBox = await card.boundingBox();
@@ -57,7 +56,7 @@ test("drops a card into the empty lower area of a short column", async ({
 });
 
 test("moves a card between columns", async ({ page }) => {
-  await page.goto("/");
+  await openBoard(page, board);
   const card = page.getByTestId("card-card-1");
   const targetColumn = page.getByTestId("column-col-review");
   const cardBox = await card.boundingBox();

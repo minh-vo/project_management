@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KanbanBoard } from "@/components/KanbanBoard";
-import { getBoard, getChat, postChat, putBoard } from "@/lib/api";
+import { getBoard, getChat, listUsers, postChat, putBoard } from "@/lib/api";
 import { initialData } from "@/lib/kanban";
 
 vi.mock("@/lib/api", async (importOriginal) => ({
@@ -11,15 +11,28 @@ vi.mock("@/lib/api", async (importOriginal) => ({
   putBoard: vi.fn(),
   getChat: vi.fn(),
   postChat: vi.fn(),
+  listUsers: vi.fn(),
 }));
 
 const getBoardMock = vi.mocked(getBoard);
 const putBoardMock = vi.mocked(putBoard);
 const getChatMock = vi.mocked(getChat);
 const postChatMock = vi.mocked(postChat);
+const listUsersMock = vi.mocked(listUsers);
+
+const boards = [{ id: 1, name: "My Board", updated_at: "2026-01-01T00:00:00Z" }];
 
 const renderBoard = async () => {
-  render(<KanbanBoard />);
+  render(
+    <KanbanBoard
+      boardId={1}
+      boards={boards}
+      onSelectBoard={vi.fn()}
+      onCreateBoard={vi.fn()}
+      onRenameBoard={vi.fn()}
+      onDeleteBoard={vi.fn()}
+    />
+  );
   await screen.findAllByTestId(/column-/i);
 };
 
@@ -34,6 +47,7 @@ describe("KanbanBoard", () => {
     putBoardMock.mockReset().mockResolvedValue({ status: "ok" });
     getChatMock.mockReset().mockResolvedValue({ messages: [] });
     postChatMock.mockReset();
+    listUsersMock.mockReset().mockResolvedValue([{ id: 1, username: "user" }]);
   });
 
   it("loads the board from the API and renders five columns", async () => {
@@ -50,7 +64,7 @@ describe("KanbanBoard", () => {
     expect(input).toHaveValue("New Name");
 
     await waitForSave();
-    const saved = putBoardMock.mock.calls.at(-1)![0];
+    const saved = putBoardMock.mock.calls.at(-1)![1];
     expect(saved.columns[0].title).toBe("New Name");
   });
 
@@ -74,7 +88,7 @@ describe("KanbanBoard", () => {
     expect(within(column).getByText("New card")).toBeInTheDocument();
 
     await waitForSave();
-    const saved = putBoardMock.mock.calls.at(-1)![0];
+    const saved = putBoardMock.mock.calls.at(-1)![1];
     expect(
       Object.values(saved.cards).some((card) => card.title === "New card")
     ).toBe(true);
@@ -83,6 +97,68 @@ describe("KanbanBoard", () => {
       within(column).getByRole("button", { name: /delete new card/i })
     );
     expect(within(column).queryByText("New card")).not.toBeInTheDocument();
+  });
+
+  it("adds a card with due date, priority, labels, and assignee", async () => {
+    listUsersMock.mockResolvedValue([
+      { id: 1, username: "user" },
+      { id: 2, username: "alex" },
+    ]);
+    await renderBoard();
+    const column = getFirstColumn();
+    await userEvent.click(
+      within(column).getByRole("button", { name: /add a card/i })
+    );
+    await userEvent.type(
+      within(column).getByPlaceholderText(/card title/i),
+      "Metadata card"
+    );
+    await userEvent.type(within(column).getByLabelText(/due date/i), "2026-08-01");
+    await userEvent.selectOptions(within(column).getByLabelText(/priority/i), "high");
+    await userEvent.type(within(column).getByLabelText(/labels/i), "urgent, design");
+    await userEvent.selectOptions(within(column).getByLabelText(/assignee/i), "2");
+    await userEvent.click(
+      within(column).getByRole("button", { name: /add card/i })
+    );
+
+    await waitForSave();
+    const saved = putBoardMock.mock.calls.at(-1)![1];
+    const newCard = Object.values(saved.cards).find(
+      (card) => card.title === "Metadata card"
+    );
+    expect(newCard).toMatchObject({
+      dueDate: "2026-08-01",
+      priority: "high",
+      labels: ["urgent", "design"],
+      assigneeId: 2,
+    });
+
+    // Badges render for the newly added card.
+    expect(within(column).getByText("high")).toBeInTheDocument();
+    expect(within(column).getByText("Due 2026-08-01")).toBeInTheDocument();
+    expect(within(column).getByText("alex")).toBeInTheDocument();
+    expect(within(column).getByText("urgent")).toBeInTheDocument();
+    expect(within(column).getByText("design")).toBeInTheDocument();
+  });
+
+  it("edits a card's metadata and saves", async () => {
+    listUsersMock.mockResolvedValue([{ id: 1, username: "user" }]);
+    await renderBoard();
+    const column = getFirstColumn();
+    await userEvent.click(
+      within(column).getByRole("button", { name: /edit align roadmap themes/i })
+    );
+
+    await userEvent.selectOptions(within(column).getByLabelText("Priority"), "low");
+    await userEvent.selectOptions(within(column).getByLabelText("Assignee"), "1");
+    await userEvent.click(within(column).getByRole("button", { name: "Save" }));
+
+    await waitForSave();
+    const saved = putBoardMock.mock.calls.at(-1)![1];
+    expect(saved.cards["card-1"].priority).toBe("low");
+    expect(saved.cards["card-1"].assigneeId).toBe(1);
+    expect(within(column).getByText("low")).toBeInTheDocument();
+    expect(within(column).getByText("user")).toBeInTheDocument();
   });
 
   it("edits a card and saves", async () => {
@@ -106,7 +182,7 @@ describe("KanbanBoard", () => {
     expect(within(column).getByText("Updated details")).toBeInTheDocument();
 
     await waitForSave();
-    const saved = putBoardMock.mock.calls.at(-1)![0];
+    const saved = putBoardMock.mock.calls.at(-1)![1];
     expect(saved.cards["card-1"].title).toBe("Updated title");
     expect(saved.cards["card-1"].details).toBe("Updated details");
   });
@@ -177,7 +253,7 @@ describe("KanbanBoard", () => {
     expect(getBoardMock).toHaveBeenCalledTimes(1);
 
     await waitForSave();
-    const saved = putBoardMock.mock.calls.at(-1)![0];
+    const saved = putBoardMock.mock.calls.at(-1)![1];
     expect(saved.columns[0].title).toBe("New Name");
   });
 });

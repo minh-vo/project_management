@@ -10,6 +10,7 @@ from app.ai import router as ai_router
 from app.auth import router as auth_router
 from app.board import router as board_router
 from app.db import init_db
+from app.users import router as users_router
 
 STATIC_DIR = Path(
     os.environ.get("STATIC_DIR", Path(__file__).resolve().parent.parent / "static")
@@ -26,6 +27,7 @@ app = FastAPI(title="Project Management API", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(board_router)
 app.include_router(ai_router)
+app.include_router(users_router)
 
 
 @app.get("/api/health")

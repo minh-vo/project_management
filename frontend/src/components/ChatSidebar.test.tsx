@@ -43,6 +43,7 @@ describe("ChatSidebar", () => {
   it("shows a toggle button when closed", () => {
     render(
       <ChatSidebar
+        boardId={1}
         open={false}
         onToggle={onToggle}
         onBoardUpdated={onBoardUpdated}
@@ -53,7 +54,7 @@ describe("ChatSidebar", () => {
 
   it("loads and renders history when opened", async () => {
     render(
-      <ChatSidebar open onToggle={onToggle} onBoardUpdated={onBoardUpdated} />
+      <ChatSidebar boardId={1} open onToggle={onToggle} onBoardUpdated={onBoardUpdated} />
     );
 
     await waitFor(() => expect(getChatMock).toHaveBeenCalled());
@@ -63,14 +64,14 @@ describe("ChatSidebar", () => {
 
   it("sends a message and appends the assistant reply", async () => {
     render(
-      <ChatSidebar open onToggle={onToggle} onBoardUpdated={onBoardUpdated} />
+      <ChatSidebar boardId={1} open onToggle={onToggle} onBoardUpdated={onBoardUpdated} />
     );
     await waitFor(() => expect(getChatMock).toHaveBeenCalled());
 
     await userEvent.type(screen.getByTestId("chat-input"), "Add a card");
     await userEvent.click(screen.getByRole("button", { name: /send/i }));
 
-    expect(postChatMock).toHaveBeenCalledWith("Add a card");
+    expect(postChatMock).toHaveBeenCalledWith(1, "Add a card");
     await waitFor(() =>
       expect(screen.getByText("Done.")).toBeInTheDocument()
     );
@@ -82,7 +83,7 @@ describe("ChatSidebar", () => {
       board_updated: true,
     });
     render(
-      <ChatSidebar open onToggle={onToggle} onBoardUpdated={onBoardUpdated} />
+      <ChatSidebar boardId={1} open onToggle={onToggle} onBoardUpdated={onBoardUpdated} />
     );
     await waitFor(() => expect(getChatMock).toHaveBeenCalled());
 
@@ -95,7 +96,7 @@ describe("ChatSidebar", () => {
   it("shows an error when sending fails", async () => {
     postChatMock.mockRejectedValue(new Error("network"));
     render(
-      <ChatSidebar open onToggle={onToggle} onBoardUpdated={onBoardUpdated} />
+      <ChatSidebar boardId={1} open onToggle={onToggle} onBoardUpdated={onBoardUpdated} />
     );
     await waitFor(() => expect(getChatMock).toHaveBeenCalled());
 

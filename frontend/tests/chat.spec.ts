@@ -1,18 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { initialData } from "../src/lib/kanban";
+import { loginAndCreateBoard, openBoard, type SeededBoard } from "./helpers";
 
-test.beforeEach(async ({ page }) => {
-  await page.request.post("/api/login", {
-    data: { username: "user", password: "password" },
-  });
-  const reset = await page.request.put("/api/board", { data: initialData });
-  if (!reset.ok()) {
-    throw new Error(`Board reset failed: ${reset.status()}`);
-  }
+let board: SeededBoard;
+
+test.beforeEach(async ({ page }, testInfo) => {
+  const name = `Chat ${testInfo.testId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  board = await loginAndCreateBoard(page, name);
 });
 
 test("opens the chat sidebar and shows history", async ({ page }) => {
-  await page.route("**/api/chat", async (route) => {
+  await page.route("**/api/boards/*/chat", async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({
         json: {
@@ -35,7 +33,7 @@ test("opens the chat sidebar and shows history", async ({ page }) => {
     await route.continue();
   });
 
-  await page.goto("/");
+  await openBoard(page, board);
   await page.getByTestId("chat-toggle").click();
   await expect(page.getByTestId("chat-sidebar")).toBeVisible();
   await expect(page.getByText("Earlier question")).toBeVisible();
@@ -54,7 +52,7 @@ test("shows a new card on the board after an AI board update", async ({
   updatedBoard.columns[0].cardIds.push("card-ai");
 
   let boardGets = 0;
-  await page.route("**/api/board", async (route) => {
+  await page.route("**/api/boards/*", async (route) => {
     if (route.request().method() === "GET") {
       boardGets += 1;
       if (boardGets > 1) {
@@ -65,7 +63,7 @@ test("shows a new card on the board after an AI board update", async ({
     await route.continue();
   });
 
-  await page.route("**/api/chat", async (route) => {
+  await page.route("**/api/boards/*/chat", async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({ json: { messages: [] } });
       return;
@@ -79,7 +77,7 @@ test("shows a new card on the board after an AI board update", async ({
     await route.continue();
   });
 
-  await page.goto("/");
+  await openBoard(page, board);
   await page.getByTestId("chat-toggle").click();
   await page.getByTestId("chat-input").fill("add a card called AI created card");
   await page.getByRole("button", { name: /send/i }).click();
@@ -92,7 +90,7 @@ test("shows a new card on the board after an AI board update", async ({
 test("closes the sidebar without breaking the board layout", async ({
   page,
 }) => {
-  await page.route("**/api/chat", async (route) => {
+  await page.route("**/api/boards/*/chat", async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill({ json: { messages: [] } });
       return;
@@ -100,7 +98,7 @@ test("closes the sidebar without breaking the board layout", async ({
     await route.continue();
   });
 
-  await page.goto("/");
+  await openBoard(page, board);
   await expect(page.getByRole("heading", { name: "Kanban Studio" })).toBeVisible();
   await page.getByTestId("chat-toggle").click();
   await expect(page.getByTestId("chat-sidebar")).toBeVisible();

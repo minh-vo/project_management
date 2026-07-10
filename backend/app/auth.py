@@ -1,13 +1,12 @@
 import os
+from contextlib import closing
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from pydantic import BaseModel
 
-# MVP: single hardcoded user. The database still models multiple users.
-VALID_USERNAME = "user"
-VALID_PASSWORD = "password"
+from app.db import connect, ensure_user_board, seed_users
 
 SESSION_COOKIE = "session"
 SESSION_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
@@ -24,9 +23,9 @@ class LoginRequest(BaseModel):
     password: str
 
 
-def current_user(
+def current_user_id(
     session: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
-) -> str:
+) -> int:
     if session is None:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
@@ -35,16 +34,18 @@ def current_user(
         raise HTTPException(status_code=401, detail="Invalid session")
 
 
-CurrentUser = Annotated[str, Depends(current_user)]
+CurrentUserId = Annotated[int, Depends(current_user_id)]
 
 
 @router.post("/login")
 def login(body: LoginRequest, response: Response) -> dict[str, str]:
-    if body.username != VALID_USERNAME or body.password != VALID_PASSWORD:
+    if seed_users().get(body.username) != body.password:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    with closing(connect()) as conn, conn:
+        user_id = ensure_user_board(conn, body.username)
     response.set_cookie(
         SESSION_COOKIE,
-        serializer.dumps(body.username),
+        serializer.dumps(user_id),
         max_age=SESSION_MAX_AGE,
         httponly=True,
         samesite="lax",
@@ -59,5 +60,11 @@ def logout(response: Response) -> dict[str, str]:
 
 
 @router.get("/me")
-def me(username: CurrentUser) -> dict[str, str]:
-    return {"username": username}
+def me(user_id: CurrentUserId) -> dict[str, str]:
+    with closing(connect()) as conn:
+        row = conn.execute(
+            "SELECT username FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+    return {"username": row["username"]}

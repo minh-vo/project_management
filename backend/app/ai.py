@@ -7,9 +7,9 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from app.auth import CurrentUser
-from app.board import BoardData, load_user_board, save_user_board
-from app.db import connect, ensure_user_board
+from app.auth import CurrentUserId
+from app.board import BoardData, load_board, save_board
+from app.db import connect
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "openai/gpt-oss-120b"
@@ -125,10 +125,10 @@ async def complete(messages: list[dict[str, str]]) -> tuple[str, str | None]:
     return choice["message"]["content"], choice.get("finish_reason")
 
 
-def fetch_chat_history(conn, user_id: int) -> list[ChatMessageOut]:
+def fetch_chat_history(conn, board_id: int) -> list[ChatMessageOut]:
     rows = conn.execute(
-        "SELECT role, content, created_at FROM chat_messages WHERE user_id = ? ORDER BY id",
-        (user_id,),
+        "SELECT role, content, created_at FROM chat_messages WHERE board_id = ? ORDER BY id",
+        (board_id,),
     ).fetchall()
     return [
         ChatMessageOut(role=row["role"], content=row["content"], created_at=row["created_at"])
@@ -136,14 +136,16 @@ def fetch_chat_history(conn, user_id: int) -> list[ChatMessageOut]:
     ]
 
 
-def persist_chat_turn(conn, user_id: int, user_message: str, assistant_reply: str) -> None:
+def persist_chat_turn(
+    conn, user_id: int, board_id: int, user_message: str, assistant_reply: str
+) -> None:
     conn.execute(
-        "INSERT INTO chat_messages (user_id, role, content) VALUES (?, 'user', ?)",
-        (user_id, user_message),
+        "INSERT INTO chat_messages (user_id, board_id, role, content) VALUES (?, ?, 'user', ?)",
+        (user_id, board_id, user_message),
     )
     conn.execute(
-        "INSERT INTO chat_messages (user_id, role, content) VALUES (?, 'assistant', ?)",
-        (user_id, assistant_reply),
+        "INSERT INTO chat_messages (user_id, board_id, role, content) VALUES (?, ?, 'assistant', ?)",
+        (user_id, board_id, assistant_reply),
     )
 
 
@@ -158,7 +160,7 @@ def build_messages(board: BoardData, history: list[ChatMessageOut], user_message
     return messages
 
 
-def apply_board_update(data: dict, username: str) -> bool:
+def apply_board_update(data: dict, user_id: int, board_id: int) -> bool:
     if data.get("board_update") is None:
         return False
     try:
@@ -166,26 +168,12 @@ def apply_board_update(data: dict, username: str) -> bool:
     except ValidationError:
         return False
     with closing(connect()) as conn, conn:
-        user_id = ensure_user_board(conn, username)
-        save_user_board(conn, user_id, board)
+        save_board(conn, user_id, board_id, board)
     return True
 
 
-@router.get("/chat")
-def get_chat(username: CurrentUser) -> ChatHistoryOut:
-    with closing(connect()) as conn, conn:
-        user_id = ensure_user_board(conn, username)
-        return ChatHistoryOut(messages=fetch_chat_history(conn, user_id))
-
-
-@router.post("/chat")
-async def post_chat(body: ChatRequest, username: CurrentUser) -> PostChatOut:
-    with closing(connect()) as conn, conn:
-        user_id = ensure_user_board(conn, username)
-        board = load_user_board(conn, user_id)
-        history = fetch_chat_history(conn, user_id)
-
-    content, finish_reason = await complete(build_messages(board, history, body.message))
+async def _run_chat_turn(user_id: int, board_id: int, board: BoardData, history, message: str) -> PostChatOut:
+    content, finish_reason = await complete(build_messages(board, history, message))
     if not content:
         raise HTTPException(status_code=502, detail="AI returned an empty response")
     try:
@@ -193,7 +181,7 @@ async def post_chat(body: ChatRequest, username: CurrentUser) -> PostChatOut:
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=502, detail="AI returned invalid JSON") from exc
 
-    board_updated = apply_board_update(data, username)
+    board_updated = apply_board_update(data, user_id, board_id)
     reply = finalize_reply(
         data.get("reply", ""),
         board_updated=board_updated,
@@ -201,7 +189,25 @@ async def post_chat(body: ChatRequest, username: CurrentUser) -> PostChatOut:
     )
 
     with closing(connect()) as conn, conn:
-        user_id = ensure_user_board(conn, username)
-        persist_chat_turn(conn, user_id, body.message, reply)
+        persist_chat_turn(conn, user_id, board_id, message, reply)
 
     return PostChatOut(reply=reply, board_updated=board_updated)
+
+
+@router.get("/boards/{board_id}/chat")
+def get_board_chat(board_id: int, user_id: CurrentUserId) -> ChatHistoryOut:
+    with closing(connect()) as conn, conn:
+        if load_board(conn, user_id, board_id) is None:
+            raise HTTPException(status_code=404, detail="Board not found")
+        return ChatHistoryOut(messages=fetch_chat_history(conn, board_id))
+
+
+@router.post("/boards/{board_id}/chat")
+async def post_board_chat(board_id: int, body: ChatRequest, user_id: CurrentUserId) -> PostChatOut:
+    with closing(connect()) as conn, conn:
+        board = load_board(conn, user_id, board_id)
+        if board is None:
+            raise HTTPException(status_code=404, detail="Board not found")
+        history = fetch_chat_history(conn, board_id)
+
+    return await _run_chat_turn(user_id, board_id, board, history, body.message)

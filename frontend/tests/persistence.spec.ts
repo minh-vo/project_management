@@ -1,31 +1,19 @@
-import { expect, test, type Page } from "@playwright/test";
-import { initialData } from "../src/lib/kanban";
+import { expect, test } from "@playwright/test";
+import { loginAndCreateBoard, openBoard, waitForBoardSave, type SeededBoard } from "./helpers";
 
-test.beforeEach(async ({ page }) => {
-  await page.request.post("/api/login", {
-    data: { username: "user", password: "password" },
-  });
-  // Reset the persisted board so tests are independent.
-  const reset = await page.request.put("/api/board", { data: initialData });
-  if (!reset.ok()) {
-    throw new Error(`Board reset failed: ${reset.status()}`);
-  }
+let board: SeededBoard;
+
+test.beforeEach(async ({ page }, testInfo) => {
+  const name = `Persistence ${testInfo.testId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  board = await loginAndCreateBoard(page, name);
 });
 
-const waitForSave = (page: Page) =>
-  page.waitForResponse(
-    (response) =>
-      response.url().includes("/api/board") &&
-      response.request().method() === "PUT" &&
-      response.ok()
-  );
-
 test("added card survives a reload", async ({ page }) => {
-  await page.goto("/");
+  await openBoard(page, board);
   const column = page.getByTestId("column-col-backlog");
   await column.getByRole("button", { name: /add a card/i }).click();
   await column.getByPlaceholder("Card title").fill("Persistent card");
-  const saved = waitForSave(page);
+  const saved = waitForBoardSave(page, board.id);
   await column.getByRole("button", { name: /add card/i }).click();
   await saved;
 
@@ -36,11 +24,11 @@ test("added card survives a reload", async ({ page }) => {
 });
 
 test("column rename survives a reload", async ({ page }) => {
-  await page.goto("/");
+  await openBoard(page, board);
   const input = page
     .getByTestId("column-col-backlog")
     .getByLabel("Column title");
-  const saved = waitForSave(page);
+  const saved = waitForBoardSave(page, board.id);
   await input.fill("Icebox");
   await saved;
 
@@ -51,13 +39,13 @@ test("column rename survives a reload", async ({ page }) => {
 });
 
 test("card move survives a reload", async ({ page }) => {
-  await page.goto("/");
+  await openBoard(page, board);
   const card = page.getByTestId("card-card-1");
   const target = page.getByTestId("column-col-review");
   const cardBox = (await card.boundingBox())!;
   const targetBox = (await target.boundingBox())!;
 
-  const saved = waitForSave(page);
+  const saved = waitForBoardSave(page, board.id);
   await page.mouse.move(
     cardBox.x + cardBox.width / 2,
     cardBox.y + cardBox.height / 2
@@ -78,12 +66,12 @@ test("card move survives a reload", async ({ page }) => {
 });
 
 test("card edit survives a reload", async ({ page }) => {
-  await page.goto("/");
+  await openBoard(page, board);
   const card = page.getByTestId("card-card-1");
   await card.getByRole("button", { name: /^edit/i }).click();
   await card.getByLabel("Card title").fill("Edited title");
   await card.getByLabel("Card details").fill("Edited details");
-  const saved = waitForSave(page);
+  const saved = waitForBoardSave(page, board.id);
   await card.getByRole("button", { name: "Save" }).click();
   await saved;
 
@@ -93,9 +81,9 @@ test("card edit survives a reload", async ({ page }) => {
 });
 
 test("deleted card stays deleted after a reload", async ({ page }) => {
-  await page.goto("/");
+  await openBoard(page, board);
   const card = page.getByTestId("card-card-8");
-  const saved = waitForSave(page);
+  const saved = waitForBoardSave(page, board.id);
   await card.getByRole("button", { name: /^delete/i }).click();
   await saved;
 

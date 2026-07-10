@@ -2,27 +2,13 @@ import copy
 import json
 
 import httpx
-import pytest
 import respx
-from fastapi.testclient import TestClient
 from httpx import Response
 
 from app.ai import MODEL, OPENROUTER_URL, finalize_reply
 from app.db import SEED_BOARD
-from app.main import app
-
-
-@pytest.fixture(autouse=True)
-def temp_db(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "test.db"))
-
-
-def make_client(logged_in: bool = True) -> TestClient:
-    client = TestClient(app)
-    client.__enter__()
-    if logged_in:
-        client.post("/api/login", json={"username": "user", "password": "password"})
-    return client
+from conftest import expected_seed_board, make_client
+from test_board import first_board_id
 
 
 def structured_reply(reply: str, board_update: dict | None = None) -> Response:
@@ -32,8 +18,8 @@ def structured_reply(reply: str, board_update: dict | None = None) -> Response:
 
 def test_chat_requires_auth():
     client = make_client(logged_in=False)
-    assert client.get("/api/chat").status_code == 401
-    assert client.post("/api/chat", json={"message": "hi"}).status_code == 401
+    assert client.get("/api/boards/1/chat").status_code == 401
+    assert client.post("/api/boards/1/chat", json={"message": "hi"}).status_code == 401
 
 
 @respx.mock
@@ -43,15 +29,16 @@ def test_chat_reply_without_board_update(monkeypatch):
         return_value=structured_reply("Hello! How can I help with your board?")
     )
     client = make_client()
+    board_id = first_board_id(client)
 
-    response = client.post("/api/chat", json={"message": "hi there"})
+    response = client.post(f"/api/boards/{board_id}/chat", json={"message": "hi there"})
 
     assert response.status_code == 200
     assert response.json() == {
         "reply": "Hello! How can I help with your board?",
         "board_updated": False,
     }
-    assert client.get("/api/board").json() == SEED_BOARD
+    assert client.get(f"/api/boards/{board_id}").json() == expected_seed_board()
 
     body = json.loads(route.calls.last.request.content)
     assert body["model"] == MODEL
@@ -69,12 +56,16 @@ def test_chat_reply_with_board_update_saves_board(monkeypatch):
         return_value=structured_reply("Added the card to Backlog.", board)
     )
     client = make_client()
+    board_id = first_board_id(client)
 
-    response = client.post("/api/chat", json={"message": "add a card called New task to Backlog"})
+    response = client.post(
+        f"/api/boards/{board_id}/chat",
+        json={"message": "add a card called New task to Backlog"},
+    )
 
     assert response.status_code == 200
     assert response.json()["board_updated"] is True
-    fetched = client.get("/api/board").json()
+    fetched = client.get(f"/api/boards/{board_id}").json()
     assert "card-9" in fetched["cards"]
     assert "card-9" in fetched["columns"][0]["cardIds"]
 
@@ -88,12 +79,13 @@ def test_chat_invalid_board_update_rejected_without_corrupting_board(monkeypatch
         return_value=structured_reply("Updated the board.", bad_board)
     )
     client = make_client()
+    board_id = first_board_id(client)
 
-    response = client.post("/api/chat", json={"message": "rename backlog column"})
+    response = client.post(f"/api/boards/{board_id}/chat", json={"message": "rename backlog column"})
 
     assert response.status_code == 200
     assert response.json() == {"reply": "Updated the board.", "board_updated": False}
-    assert client.get("/api/board").json() == SEED_BOARD
+    assert client.get(f"/api/boards/{board_id}").json() == expected_seed_board()
 
 
 @respx.mock
@@ -106,11 +98,12 @@ def test_chat_history_persisted_and_returned_in_order(monkeypatch):
         ]
     )
     client = make_client()
+    board_id = first_board_id(client)
 
-    client.post("/api/chat", json={"message": "first"})
-    client.post("/api/chat", json={"message": "second"})
+    client.post(f"/api/boards/{board_id}/chat", json={"message": "first"})
+    client.post(f"/api/boards/{board_id}/chat", json={"message": "second"})
 
-    history = client.get("/api/chat").json()["messages"]
+    history = client.get(f"/api/boards/{board_id}/chat").json()["messages"]
     assert [m["role"] for m in history] == ["user", "assistant", "user", "assistant"]
     assert [m["content"] for m in history] == [
         "first",
@@ -124,8 +117,9 @@ def test_chat_history_persisted_and_returned_in_order(monkeypatch):
 def test_chat_missing_api_key_returns_502(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     client = make_client()
+    board_id = first_board_id(client)
 
-    response = client.post("/api/chat", json={"message": "hi"})
+    response = client.post(f"/api/boards/{board_id}/chat", json={"message": "hi"})
 
     assert response.status_code == 502
     assert "not configured" in response.json()["detail"]
@@ -136,14 +130,15 @@ def test_chat_openrouter_error_status_returns_502(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     respx.post(OPENROUTER_URL).mock(return_value=Response(500, json={"error": "boom"}))
     client = make_client()
+    board_id = first_board_id(client)
 
-    response = client.post("/api/chat", json={"message": "hi"})
+    response = client.post(f"/api/boards/{board_id}/chat", json={"message": "hi"})
 
     assert response.status_code == 502
     assert "unavailable" in response.json()["detail"]
     # A failed AI call should not corrupt the board or history.
-    assert client.get("/api/board").json() == SEED_BOARD
-    assert client.get("/api/chat").json()["messages"] == []
+    assert client.get(f"/api/boards/{board_id}").json() == expected_seed_board()
+    assert client.get(f"/api/boards/{board_id}/chat").json()["messages"] == []
 
 
 @respx.mock
@@ -151,8 +146,9 @@ def test_chat_network_error_returns_502(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     respx.post(OPENROUTER_URL).mock(side_effect=httpx.ConnectError("connection refused"))
     client = make_client()
+    board_id = first_board_id(client)
 
-    response = client.post("/api/chat", json={"message": "hi"})
+    response = client.post(f"/api/boards/{board_id}/chat", json={"message": "hi"})
 
     assert response.status_code == 502
     assert "unavailable" in response.json()["detail"]
@@ -187,8 +183,12 @@ def test_chat_replaces_ellipsis_reply_when_board_updates(monkeypatch):
         return_value=structured_reply("...", board)
     )
     client = make_client()
+    board_id = first_board_id(client)
 
-    response = client.post("/api/chat", json={"message": "add a card called New task to Backlog"})
+    response = client.post(
+        f"/api/boards/{board_id}/chat",
+        json={"message": "add a card called New task to Backlog"},
+    )
 
     assert response.status_code == 200
     assert response.json() == {

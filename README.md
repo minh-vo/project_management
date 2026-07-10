@@ -1,13 +1,15 @@
-# Project Management MVP
+# Project Management App
 
-A local Kanban board app with sign-in, persistent storage, and an AI assistant that can create, edit, and move cards.
+A local Kanban board app with multi-user sign-in, multiple boards per user, persistent storage, and an AI assistant that can create, edit, and move cards.
 
 ## Features
 
-- Sign in with a session cookie (MVP: hardcoded `user` / `password`)
-- Five-column Kanban board: rename columns, drag-and-drop cards, add/edit/delete cards
+- Sign in with a session cookie; accounts come from an operator-configured list (`SEED_USERS`, defaults to `user` / `password`)
+- Multiple Kanban boards per user: create, switch between, rename, and delete (at least one board always remains)
+- Five-column board per board: rename columns, drag-and-drop cards, add/edit/delete cards
+- Cards carry optional due date, labels, priority, and assignee
 - Board state persisted in SQLite (survives container restarts)
-- AI chat sidebar powered by OpenRouter (`openai/gpt-oss-120b`)
+- AI chat sidebar powered by OpenRouter (`openai/gpt-oss-120b`), scoped to the board it's opened on
 
 ## Quick start
 
@@ -17,7 +19,7 @@ A local Kanban board app with sign-in, persistent storage, and an AI assistant t
    OPENROUTER_API_KEY=your_key_here
    ```
 
-   `SESSION_SECRET` in that file is optional for local use (see the comment there).
+   `SESSION_SECRET` and `SEED_USERS` in that file are optional for local use (see the comments there).
 
 2. Start the app (Docker required):
 
@@ -67,6 +69,8 @@ npm run test:e2e     # against FastAPI on port 8000
 
 For full-stack local work, either run the Docker container or build the frontend and serve it via uvicorn with `STATIC_DIR` pointing at `frontend/out`.
 
+CI (`.github/workflows/ci.yml`) runs backend pytest, frontend lint/typecheck/unit tests, and the Playwright e2e suite on every push and PR.
+
 ## API routes
 
 | Method | Path | Description |
@@ -75,8 +79,11 @@ For full-stack local work, either run the Docker container or build the frontend
 | `POST` | `/api/login` | Sign in |
 | `POST` | `/api/logout` | Sign out |
 | `GET` | `/api/me` | Current user |
-| `GET/PUT` | `/api/board` | Load/save board |
-| `GET/POST` | `/api/chat` | Chat history / send message |
+| `GET` | `/api/users` | List of accounts (for the assignee picker) |
+| `GET/POST` | `/api/boards` | List / create boards |
+| `PATCH/DELETE` | `/api/boards/{id}` | Rename / delete a board |
+| `GET/PUT` | `/api/boards/{id}` | Load/save a board |
+| `GET/POST` | `/api/boards/{id}/chat` | Chat history / send message for a board |
 
 ## Documentation
 

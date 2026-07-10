@@ -4,12 +4,14 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { getChat, postChat, type ChatMessage } from "@/lib/api";
 
 type ChatSidebarProps = {
+  boardId: number;
   open: boolean;
   onToggle: () => void;
   onBoardUpdated: () => void;
 };
 
 export const ChatSidebar = ({
+  boardId,
   open,
   onToggle,
   onBoardUpdated,
@@ -27,11 +29,11 @@ export const ChatSidebar = ({
     }
     setLoadingHistory(true);
     setError(null);
-    getChat()
+    getChat(boardId)
       .then((data) => setMessages(data.messages))
       .catch(() => setError("Could not load chat history."))
       .finally(() => setLoadingHistory(false));
-  }, [open]);
+  }, [open, boardId]);
 
   useEffect(() => {
     if (open) {
@@ -55,7 +57,7 @@ export const ChatSidebar = ({
     ]);
 
     try {
-      const result = await postChat(text);
+      const result = await postChat(boardId, text);
       setMessages((prev) => [
         ...prev,
         {
